@@ -68,6 +68,7 @@ function App() {
     client.on('room:state', (state: RoomState) => {
       setRoom(state)
       setScreen('room')
+      setLoading(false)
     })
     client.on('room:closed', () => {
       localStorage.removeItem(TOKEN_KEY)
@@ -102,8 +103,14 @@ function App() {
     }
     setLoading(true)
     setError('')
-    socket.emit(event, payload, (result: Ack) => {
+    socket.timeout(10000).emit(event, payload, (timeoutError: Error | null, result: Ack) => {
       setLoading(false)
+      if (timeoutError) {
+        setError(event === 'game:level:set'
+          ? 'The Render server did not acknowledge level selection. Deploy the latest backend version, then create a new room and try again.'
+          : 'The game server did not respond. Check that the latest Render backend deployment is running, then try again.')
+        return
+      }
       if (!result.ok) setError(result.error || 'The action could not be completed.')
       if (result.ok && result.token) localStorage.setItem(TOKEN_KEY, result.token)
       if (result.ok && result.playerId) setPlayerId(result.playerId)
@@ -117,8 +124,12 @@ function App() {
     }
     setLoading(true)
     setError('')
-    socket.emit(event, event === 'room:create' ? { nickname } : { nickname, code: roomCode }, (result: Ack) => {
+    socket.timeout(10000).emit(event, event === 'room:create' ? { nickname } : { nickname, code: roomCode }, (timeoutError: Error | null, result: Ack) => {
       setLoading(false)
+      if (timeoutError) {
+        setError('The game server did not respond. Check that the latest Render backend deployment is running, then try again.')
+        return
+      }
       if (!result.ok) {
         setError(result.error || 'Unable to enter the room.')
         return
@@ -153,6 +164,7 @@ function App() {
     client.on('room:state', (state: RoomState) => {
       setRoom(state)
       setScreen('room')
+      setLoading(false)
     })
     client.on('room:closed', () => setRoom(null))
     setSocket(client)
@@ -471,7 +483,7 @@ function Lobby({ room, playerId, isHost, connected, loading, onReady, onStart, o
         <div className="side-card system-card"><div className="side-card-label"><Signal size={14} /> LIVE SYSTEMS</div><div className="system-row"><span>ARENA SIMULATION</span><b>READY</b></div><div className="system-row"><span>CO-OP UPLINK</span><b>ACTIVE</b></div><div className="system-row"><span>OPERATORS ONLINE</span><b>{activeCount} / 6</b></div><div className="system-meter"><span /></div><div className="system-foot"><span>AWAITING DEPLOYMENT</span><span>●</span></div></div>
       </aside>
     </div>
-    <LevelPreviews selectedLevel={room.selectedLevel} unlockedLevel={room.unlockedLevel}
+    <LevelPreviews selectedLevel={room.selectedLevel} unlockedLevel={room.unlockedLevel ?? 1}
       canSelect={isHost && connected && !loading} onSelect={onSelectLevel} />
     </div>
   )
