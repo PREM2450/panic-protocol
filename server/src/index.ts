@@ -11,11 +11,6 @@ const port = process.env.PORT === undefined ? 3001 : Number(process.env.PORT)
 if (!Number.isInteger(port) || port < 1 || port > 65_535) {
   throw new Error('PORT must be an integer between 1 and 65535.')
 }
-const roundSecondsValue = process.env.ROUND_SECONDS
-const roundSeconds = roundSecondsValue === undefined ? undefined : Number(roundSecondsValue)
-if (roundSeconds !== undefined && (!Number.isInteger(roundSeconds) || roundSeconds < 1 || roundSeconds > 300)) {
-  throw new Error('ROUND_SECONDS must be an integer between 1 and 300.')
-}
 const allowedOrigins = (process.env.CLIENT_ORIGIN ?? 'http://localhost:5173')
   .split(',')
   .map((origin) => origin.trim())
@@ -30,7 +25,6 @@ const io = new Server(httpServer, {
 const playerSockets = new Map<string, string>()
 
 const game = new GameService({
-  roundSeconds,
   onUpdate: (code, closed) => {
     if (closed) {
       io.to(code).emit('room:closed')
@@ -41,9 +35,9 @@ const game = new GameService({
   },
 })
 
-type Callback = (response: { ok: boolean; error?: string; code?: string; token?: string; playerId?: string }) => void
+type Callback = (response: { ok: boolean; error?: string; message?: string; code?: string; token?: string; playerId?: string }) => void
 
-function respond(callback: unknown, result: ReturnType<GameService['createRoom']>): void {
+function respond(callback: unknown, result: { ok: boolean; error?: string; message?: string; code?: string; token?: string; playerId?: string }): void {
   if (typeof callback === 'function') (callback as Callback)(result)
 }
 
@@ -91,6 +85,9 @@ io.on('connection', (socket) => {
       return
     }
     const result = game.joinRoom(body.code, body.nickname)
+    if (!result.ok) {
+      console.warn('[room:join] rejected', { reason: result.reason ?? 'invalid-request' })
+    }
     if (result.ok) {
       claimPlayer(result.token, result.code)
       socket.join(result.code)
@@ -144,14 +141,31 @@ io.on('connection', (socket) => {
     respond(callback, result)
   })
 
-  socket.on('game:submit', (payload: unknown, callback?: unknown) => {
-    const choiceId = typeof payload === 'object' && payload !== null && 'choiceId' in payload
-      ? (payload as { choiceId?: unknown }).choiceId
+  socket.on('game:level:set', (payload: unknown, callback?: unknown) => {
+    const levelId = typeof payload === 'object' && payload !== null && 'levelId' in payload
+      ? (payload as { levelId?: unknown }).levelId
       : null
     const playerId = currentPlayerId()
-    const result = activeCode && playerId && typeof choiceId === 'string'
-      ? game.submitChoice(activeCode, playerId, choiceId)
-      : { ok: false as const, error: 'Select a response before submitting.' }
+    const result = activeCode && playerId
+      ? game.selectLevel(activeCode, playerId, levelId)
+      : { ok: false as const, error: 'Join a room first.' }
+    respond(callback, result)
+  })
+
+  socket.on('game:input', (payload: unknown, callback?: unknown) => {
+    const body = typeof payload === 'object' && payload !== null ? payload as Record<string, unknown> : {}
+    const playerId = currentPlayerId()
+    const result = activeCode && playerId
+      ? game.setInput(activeCode, playerId, body.dx, body.dy)
+      : { ok: false as const, error: 'Join a room first.' }
+    respond(callback, result)
+  })
+
+  socket.on('game:interact', (_payload: unknown, callback?: unknown) => {
+    const playerId = currentPlayerId()
+    const result = activeCode && playerId
+      ? game.interact(activeCode, playerId)
+      : { ok: false as const, error: 'Join a room first.' }
     respond(callback, result)
   })
 
@@ -159,6 +173,14 @@ io.on('connection', (socket) => {
     const playerId = currentPlayerId()
     const result = activeCode && playerId
       ? game.replay(activeCode, playerId)
+      : { ok: false as const, error: 'Join a room first.' }
+    respond(callback, result)
+  })
+
+  socket.on('game:next-level', (_payload: unknown, callback?: unknown) => {
+    const playerId = currentPlayerId()
+    const result = activeCode && playerId
+      ? game.continueToNextLevel(activeCode, playerId)
       : { ok: false as const, error: 'Join a room first.' }
     respond(callback, result)
   })

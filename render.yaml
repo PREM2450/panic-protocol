@@ -10,5 +10,3 @@ services:
         value: production
       - key: CLIENT_ORIGIN
         sync: false
-      - key: ROUND_SECONDS
-        value: "45"
